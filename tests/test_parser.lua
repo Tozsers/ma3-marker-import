@@ -96,5 +96,65 @@ skipped("#,Name,Start,End,Length", "Reaper header row")
 skipped("# a comment line", "comment line")
 marker("Drop,84.5,86.0\r", "Drop", 84.5, "CRLF line ending")
 
+-- ------------------------------------------------------ cue numbering --
+-- A fake sequence: Children() returns cue objects that report their real cue
+-- number in `no`, exactly like grandMA3 does. CueZero reports 0 and OffCue
+-- reports nothing.
+local function fakeSequence(numbers, opts)
+    opts = opts or {}
+    local kids = {}
+    if not opts.noCueZero then
+        kids[#kids + 1] = opts.noProperty and {} or { no = 0 }
+    end
+    for _, n in ipairs(numbers) do
+        kids[#kids + 1] = opts.noProperty and {} or { no = n }
+    end
+    if not opts.noOffCue then
+        kids[#kids + 1] = {}
+    end
+
+    local seq = {}
+    if opts.noChildrenMethod then
+        for i, k in ipairs(kids) do
+            seq[i] = k
+        end
+    else
+        seq.Children = function() return kids end
+    end
+    return seq
+end
+
+local function startsAt(numbers, expected, label, opts)
+    local used, seenAny, count = P.collectCueNumbers(fakeSequence(numbers, opts))
+    local first = P.firstFreeCueNumber(used, seenAny, count)
+    eq(P.nextFreeCueNumber(used, first), expected, label)
+end
+
+startsAt({}, 1, "empty sequence starts at cue 1")
+startsAt({ 1 }, 2, "one existing cue -> starts at 2 (this is the 2026-08-16 bug)")
+startsAt({ 1, 2, 3 }, 4, "three cues in a row")
+startsAt({ 1, 2, 3, 5 }, 6, "sparse numbering never lands on the existing cue 5")
+startsAt({ 10, 20, 30 }, 31, "high numbers")
+startsAt({ 2.5 }, 3, "decimal cue number")
+startsAt({}, 3, "no readable numbers -> falls back to child count, never lower",
+    { noProperty = true })
+startsAt({ 1, 2 }, 3, "index access when Children() is unavailable",
+    { noChildrenMethod = true })
+
+-- Numbers handed out during one import must not collide with existing cues.
+do
+    local used = P.collectCueNumbers(fakeSequence({ 1, 3, 4 }))
+    local n = P.firstFreeCueNumber(P.collectCueNumbers(fakeSequence({ 1, 3, 4 })))
+    local handed = {}
+    n = 1 -- deliberately start low to prove the skipping works
+    for _ = 1, 4 do
+        n = P.nextFreeCueNumber(used, n)
+        used[n] = true
+        handed[#handed + 1] = n
+        n = n + 1
+    end
+    eq(table.concat(handed, ","), "2,5,6,7", "assigned numbers skip taken ones")
+end
+
 print(string.format("\n%d checks, %d failures", checks, failures))
 os.exit(failures == 0 and 0 or 1)

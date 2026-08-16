@@ -56,8 +56,8 @@ Then run the plugin and answer two prompts:
 When it finishes you get a summary box with the number of markers imported. Open the
 Timecode window and the Sequence pool — the cues and events are there.
 
-Existing cues in the sequence are never overwritten: numbering continues above the
-highest cue already present.
+Existing cues are never overwritten. Numbering starts above the highest cue number
+already in the sequence, and any number that is already taken is skipped.
 
 ## Input formats
 
@@ -101,9 +101,11 @@ Honesty matters more than a tidy feature list, so:
 - **The grandMA3 half is field-tested.** Creating the cues, the track and the timecode
   events has been run on grandMA3 2.4 with a real show file, and it worked. That logic is
   unchanged in this release.
-- **The file parsing is covered by tests** you can run yourself without a console:
-  `lua tests/test_parser.lua` (51 checks). This is where a silent mistake would be worst —
-  a marker landing at the wrong time — so every format and time notation is asserted.
+- **The file parsing and the cue numbering are covered by tests** you can run yourself
+  without a console:
+  `lua tests/test_parser.lua` (60 checks). This is where a silent mistake would be worst —
+  a marker landing at the wrong time, or an import writing over a cue you already had —
+  so every format, time notation and numbering case is asserted.
 - **Not tested:** every grandMA3 version, network sessions, very large marker lists
   (a few hundred is fine; thousands is untried), and non-Latin characters in marker names.
 

@@ -1,5 +1,5 @@
 --[[
-  Marker Import v1.0.0 - grandMA3 plugin
+  Marker Import v1.0.1 - grandMA3 plugin
 
   Reads a marker list from a text file and, for every marker, creates a Cue in an
   existing Sequence and a Timecode event that jumps to that Cue at the marker time.
@@ -18,7 +18,7 @@
 ]]
 
 local PLUGIN = "Marker Import"
-local VERSION = "1.0.0"
+local VERSION = "1.0.1"
 
 -- grandMA3 internal time unit: 1 second = 2^24
 local ONE_SECOND = 16777216
@@ -250,15 +250,88 @@ local function findSequenceByName(name)
     return nil
 end
 
---- Next free cue number in the sequence (existing cues are never touched).
-local function getNextCueNumber(sequence)
-    local maxNo = 0
-    for i = 1, 200 do
-        if sequence[i] then
-            maxNo = i
+--- Read the real cue number of a cue object, or nil if it has none
+--- (CueZero reports 0, OffCue reports nothing).
+local function cueNumberOf(cue)
+    if not cue then
+        return nil
+    end
+    local n = cue.no
+    if n == nil and cue.Get then
+        n = cue:Get("no")
+    end
+    if n == nil then
+        return nil
+    end
+    return tonumber(tostring(n))
+end
+
+--- Which cue numbers are already taken in this sequence?
+--- Returns a set, and how many children were seen.
+---
+--- Reading the actual `no` property matters: indexing children positionally
+--- would call cue 5 "free" in a sequence numbered 1,2,3,5 and overwrite it.
+local function collectCueNumbers(sequence)
+    local used = {}
+    local seenAny = false
+    local count = 0
+
+    local children = nil
+    if sequence.Children then
+        local ok, res = pcall(function() return sequence:Children() end)
+        if ok then
+            children = res
         end
     end
-    return maxNo + 1
+
+    if children then
+        for _, cue in ipairs(children) do
+            count = count + 1
+            local n = cueNumberOf(cue)
+            if n then
+                used[n] = true
+                seenAny = true
+            end
+        end
+    else
+        for i = 1, 1000 do
+            local cue = sequence[i]
+            if cue then
+                count = count + 1
+                local n = cueNumberOf(cue)
+                if n then
+                    used[n] = true
+                    seenAny = true
+                end
+            end
+        end
+    end
+
+    return used, seenAny, count
+end
+
+--- Where to start numbering: just above the highest existing cue number.
+--- If no cue number could be read at all (unexpected API shape), fall back to
+--- the child count, which is never lower than the old behaviour.
+local function firstFreeCueNumber(used, seenAny, count)
+    if not seenAny then
+        return count + 1
+    end
+    local maxNo = 0
+    for n in pairs(used) do
+        if n > maxNo then
+            maxNo = n
+        end
+    end
+    return math.floor(maxNo) + 1
+end
+
+--- Next number at or above `n` that is not already taken.
+local function nextFreeCueNumber(used, n)
+    while used[n] do
+        n = n + 1
+    end
+    return n
 end
 
 local function escapeForCmd(s)
@@ -436,7 +509,8 @@ local function importFile()
         return
     end
 
-    local nextCue = getNextCueNumber(sequence)
+    local used, seenAny, count = collectCueNumbers(sequence)
+    local nextCue = firstFreeCueNumber(used, seenAny, count)
     local imported = 0
     local skipped = 0
     local errors = {}
@@ -444,6 +518,8 @@ local function importFile()
     for _, line in ipairs(lines) do
         local row = parseMarkerLine(line)
         if row then
+            nextCue = nextFreeCueNumber(used, nextCue)
+            used[nextCue] = true
             local cue = storeCue(sequence, seqName, nextCue, row.name)
             if not cue then
                 errors[#errors + 1] = "Cue was not created: " .. row.name
@@ -495,6 +571,9 @@ end
 MarkerImportInternal = {
     parseTime = parseTime,
     parseMarkerLine = parseMarkerLine,
+    collectCueNumbers = collectCueNumbers,
+    firstFreeCueNumber = firstFreeCueNumber,
+    nextFreeCueNumber = nextFreeCueNumber,
 }
 
 return Main, Cleanup
