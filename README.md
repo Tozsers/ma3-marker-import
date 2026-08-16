@@ -99,8 +99,8 @@ six markers.
 Honesty matters more than a tidy feature list, so:
 
 - **The grandMA3 half is field-tested.** Creating the cues, the track and the timecode
-  events has been run on a real grandMA3 with a real show file, and it worked. That logic
-  is unchanged in this release.
+  events has been run on grandMA3 2.4 with a real show file, and it worked. That logic is
+  unchanged in this release.
 - **The file parsing is covered by tests** you can run yourself without a console:
   `lua tests/test_parser.lua` (51 checks). This is where a silent mistake would be worst —
   a marker landing at the wrong time — so every format and time notation is asserted.
