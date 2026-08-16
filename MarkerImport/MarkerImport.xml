@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GMA3 DataVersion="1.9.8.0">
+    <UserPlugin Name="Marker Import" Author="Claude (Anthropic) for Tozsers" Version="1.0.0">
+        <ComponentLua Name="Main" FileName="MarkerImport.lua" FilePath="MarkerImport" />
+    </UserPlugin>
+</GMA3>
