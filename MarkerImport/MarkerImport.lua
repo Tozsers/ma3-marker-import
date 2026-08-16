@@ -1,5 +1,5 @@
 --[[
-  Marker Import v1.0.1 - grandMA3 plugin
+  Marker Import v1.0.2 - grandMA3 plugin
 
   Reads a marker list from a text file and, for every marker, creates a Cue in an
   existing Sequence and a Timecode event that jumps to that Cue at the marker time.
@@ -18,7 +18,7 @@
 ]]
 
 local PLUGIN = "Marker Import"
-local VERSION = "1.0.1"
+local VERSION = "1.0.2"
 
 -- grandMA3 internal time unit: 1 second = 2^24
 local ONE_SECOND = 16777216
@@ -226,31 +226,78 @@ local function readLines(filepath)
     return lines
 end
 
-local function findSequenceByName(name)
+--- Every sequence in the pool, as { handle = ..., name = ... }.
+local function listSequences()
+    local out = {}
     local pool = DataPool().sequences
     if not pool then
-        return nil
-    end
-    if pool[name] then
-        return pool[name]
+        return out, nil
     end
     local cnt = pool.Count and pool:Count() or 0
     for i = 1, cnt do
         local s = pool[i]
-        if s and objName(s) == name then
-            return s
+        if s then
+            out[#out + 1] = { handle = s, name = objName(s) or "" }
         end
     end
-    if pool.FindChild then
-        local f = pool:FindChild(name)
-        if f then
-            return f
-        end
-    end
-    return nil
+    return out, pool
 end
 
---- Read the real cue number of a cue object, or nil if it has none
+--- Find a sequence by name. Case and surrounding spaces are ignored: typing
+--- "Markers" must find a sequence called "markers", or the plugin is a trap.
+local function findSequenceByName(name)
+    local wanted = trim(name)
+    local wantedLower = wanted:lower()
+
+    local seqs, pool = listSequences()
+
+    for _, s in ipairs(seqs) do
+        if s.name == wanted then
+            return s.handle, seqs
+        end
+    end
+    for _, s in ipairs(seqs) do
+        if s.name:lower() == wantedLower then
+            return s.handle, seqs
+        end
+    end
+
+    if pool then
+        if pool[wanted] then
+            return pool[wanted], seqs
+        end
+        if pool.FindChild then
+            local f = pool:FindChild(wanted)
+            if f then
+                return f, seqs
+            end
+        end
+    end
+
+    return nil, seqs
+end
+
+--- Human-readable list of what IS in the pool, for the "not found" message.
+local function describeSequences(seqs)
+    if #seqs == 0 then
+        return "The sequence pool of the loaded show is empty."
+    end
+    local names = {}
+    for i = 1, math.min(#seqs, 12) do
+        names[#names + 1] = '"' .. seqs[i].name .. '"'
+    end
+    local list = table.concat(names, ", ")
+    if #seqs > 12 then
+        list = list .. string.format(" ... (%d more)", #seqs - 12)
+    end
+    return "Sequences in the loaded show: " .. list
+end
+
+-- grandMA3 stores cue numbers in thousandths: the cue you see as "1" reports
+-- no = 1000, and cue 1.5 reports 1500. Verified on 2.4.2.2.
+local CUE_SCALE = 1000
+
+--- Read the raw `no` of a cue object, or nil if it has none
 --- (CueZero reports 0, OffCue reports nothing).
 local function cueNumberOf(cue)
     if not cue then
@@ -310,25 +357,41 @@ local function collectCueNumbers(sequence)
     return used, seenAny, count
 end
 
---- Where to start numbering: just above the highest existing cue number.
+--- Is the cue number `n` (as you would type it) already in the sequence?
+---
+--- Checks both scales on purpose. `used` holds raw values, which are
+--- thousandths on every version seen so far - but if some version ever
+--- reported plain numbers instead, checking only the scaled value would call
+--- an occupied cue free and Store would overwrite it. Checking both is cheap
+--- and cannot be wrong in either direction.
+local function isCueTaken(used, n)
+    return used[n * CUE_SCALE] == true or used[n] == true
+end
+
+local function markCueTaken(used, n)
+    used[n * CUE_SCALE] = true
+    used[n] = true
+end
+
+--- Where to start numbering: just above the highest existing cue.
 --- If no cue number could be read at all (unexpected API shape), fall back to
 --- the child count, which is never lower than the old behaviour.
 local function firstFreeCueNumber(used, seenAny, count)
     if not seenAny then
         return count + 1
     end
-    local maxNo = 0
+    local maxRaw = 0
     for n in pairs(used) do
-        if n > maxNo then
-            maxNo = n
+        if n > maxRaw then
+            maxRaw = n
         end
     end
-    return math.floor(maxNo) + 1
+    return math.floor(maxRaw / CUE_SCALE) + 1
 end
 
 --- Next number at or above `n` that is not already taken.
 local function nextFreeCueNumber(used, n)
-    while used[n] do
+    while isCueTaken(used, n) do
         n = n + 1
     end
     return n
@@ -481,11 +544,17 @@ local function importFile()
     if not seqName or seqName == "" then
         return
     end
-    local sequence = findSequenceByName(seqName)
+    local sequence, seqs = findSequenceByName(seqName)
     if not sequence then
-        notify(PLUGIN, "No such Sequence: \"" .. seqName .. "\".\nCreate it first (an empty one is fine), then run the plugin again.")
+        notify(PLUGIN, "No sequence called \"" .. seqName .. "\" in this show.\n\n"
+            .. describeSequences(seqs or {}) .. "\n\n"
+            .. "Create it first (an empty one is fine), or check that the show you\n"
+            .. "expected is the one that is loaded, then run the plugin again.")
         return
     end
+    -- Use the name the console actually knows, so the Store command below cannot
+    -- fail on a difference in capitalisation.
+    seqName = objName(sequence) or seqName
 
     local defaultFile = libraryPath() .. pathSep() .. "markers.csv"
     local filepath = TextInput("Full path of the marker file:", defaultFile)
@@ -519,7 +588,7 @@ local function importFile()
         local row = parseMarkerLine(line)
         if row then
             nextCue = nextFreeCueNumber(used, nextCue)
-            used[nextCue] = true
+            markCueTaken(used, nextCue)
             local cue = storeCue(sequence, seqName, nextCue, row.name)
             if not cue then
                 errors[#errors + 1] = "Cue was not created: " .. row.name
@@ -574,6 +643,9 @@ MarkerImportInternal = {
     collectCueNumbers = collectCueNumbers,
     firstFreeCueNumber = firstFreeCueNumber,
     nextFreeCueNumber = nextFreeCueNumber,
+    markCueTaken = markCueTaken,
+    findSequenceByName = findSequenceByName,
+    describeSequences = describeSequences,
 }
 
 return Main, Cleanup
