@@ -23,6 +23,12 @@ of your show data to anyone.
                                           └──────────────────────────┘
 ```
 
+Here is the result on a real console — 37 markers from a five-minute track, imported
+into a timecode show. The track targets the sequence, and every event fires one of its
+cues at the marker time:
+
+![Timecode events created by the plugin](screenshots/timecode-events.png)
+
 ## Install
 
 1. Copy the `MarkerImport` folder into your grandMA3 plugin library:
@@ -53,8 +59,12 @@ Then run the plugin and answer two prompts:
 | Sequence name | the name of that existing sequence, e.g. `Markers` (capitalisation does not matter) |
 | Full path of the marker file | e.g. `/Users/me/markers.csv` |
 
+![The sequence name prompt](screenshots/sequence-prompt.png)
+
 When it finishes you get a summary box with the number of markers imported. Open the
 Timecode window and the Sequence pool — the cues and events are there.
+
+![Import summary](screenshots/import-summary.png)
 
 Existing cues are never overwritten. Numbering starts above the highest cue number
 already in the sequence, and any number that is already taken is skipped.
