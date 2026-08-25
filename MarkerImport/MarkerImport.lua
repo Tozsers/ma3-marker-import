@@ -1,5 +1,5 @@
 --[[
-  Marker Import v1.0.2 - grandMA3 plugin
+  Marker Import v1.0.3 - grandMA3 plugin
 
   Reads a marker list from a text file and, for every marker, creates a Cue in an
   existing Sequence and a Timecode event that jumps to that Cue at the marker time.
@@ -18,7 +18,7 @@
 ]]
 
 local PLUGIN = "Marker Import"
-local VERSION = "1.0.2"
+local VERSION = "1.0.3"
 
 -- grandMA3 internal time unit: 1 second = 2^24
 local ONE_SECOND = 16777216
@@ -32,9 +32,23 @@ end
 
 local function notify(title, body)
     Echo("[" .. PLUGIN .. "] " .. body)
-    Printf("[%s] %s", PLUGIN, body)
+    -- The Command Line shows only the first line of a multi-line message, so the
+    -- summary would be cut off after "Timecode: ...". Print it line by line.
+    for line in (tostring(body) .. "\n"):gmatch("([^\n]*)\n") do
+        if line ~= "" then
+            Printf("[%s] %s", PLUGIN, line)
+        end
+    end
+    -- grandMA3 2.4 expects a table here, not (title, body, "OK"). Wrapped in pcall
+    -- so a dialog problem can never take a finished import down with it.
     if MessageBox then
-        MessageBox(title, body, "OK")
+        pcall(function()
+            MessageBox({
+                title = title,
+                message = tostring(body),
+                commands = { { value = 1, name = "OK" } },
+            })
+        end)
     end
 end
 
@@ -414,14 +428,58 @@ local function storeCue(sequence, seqName, cueNo, cueName)
     return cue
 end
 
-local function ensureTrackGroup(timecode)
-    local tg = timecode[1]
-    if tg then
-        return tg
+--- The class of an object, as a plain string ("CmdSubTrack", "TimeRange", ...).
+--- Note: an object has no `.class` property, and `tostring(object)` returns its ADDRESS
+--- ("Timecode 1.1.2.1.1"), not its class - so neither can be used to recognise a child.
+local function classOf(object)
+    if not object then
+        return ""
     end
-    tg = timecode:Acquire()
-    coroutine.yield(0.25)
-    return timecode[1] or tg
+    local ok, cls = pcall(function() return object:GetClass() end)
+    return (ok and cls) and tostring(cls) or ""
+end
+
+local function childOfClass(parent, className)
+    if not parent then
+        return nil
+    end
+    local ok, kids = pcall(function() return parent:Children() end)
+    if ok and type(kids) == "table" then
+        for _, child in ipairs(kids) do
+            if classOf(child) == className then
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+--- Create a child and wait until the console actually hands it over.
+--- A freshly created object is not there on the next line: the console needs a moment,
+--- and Acquire's return value cannot be trusted on its own. So we re-read the parent,
+--- and give it several tries before giving up.
+local function acquireChild(parent, className, wantedClass)
+    if not parent then
+        return nil
+    end
+    local made
+    if className then
+        made = parent:Acquire(className)
+    else
+        made = parent:Acquire()
+    end
+    for _ = 1, 12 do
+        coroutine.yield(0.1)
+        local child = wantedClass and childOfClass(parent, wantedClass) or parent[1]
+        if child then
+            return child
+        end
+    end
+    return made
+end
+
+local function ensureTrackGroup(timecode)
+    return timecode[1] or acquireChild(timecode, nil, nil)
 end
 
 local function trackMatchesSequence(track, sequence)
@@ -470,12 +528,20 @@ local function getOrCreateTrack(timecode, sequence)
 
     local track = findTrackInGroup(tg, sequence)
     if not track then
-        track = tg:Acquire()
-        coroutine.yield(0.2)
-        if track and track.Set then
-            track:Set("target", sequence)
+        local made = tg:Acquire()
+        if made and made.Set then
+            made:Set("target", sequence)
         end
-        track = findTrackInGroup(tg, sequence) or track
+        -- The console registers the new track a moment later; keep looking for it
+        -- rather than trusting Acquire's return value.
+        for _ = 1, 12 do
+            coroutine.yield(0.1)
+            track = findTrackInGroup(tg, sequence)
+            if track then
+                break
+            end
+        end
+        track = track or made
         msg("New track: " .. seqName)
     end
 
@@ -489,27 +555,22 @@ local function getCmdSubTrack(track)
     if not track then
         return nil
     end
+
+    -- A brand new track has no TimeRange yet.
     local timeRange = track[1]
     if not timeRange then
-        timeRange = track:Acquire()
-        coroutine.yield(0.1)
+        timeRange = acquireChild(track, nil, nil)
     end
     if not timeRange then
         return nil
     end
-    local sub = timeRange[1]
-    if sub and sub.class and tostring(sub.class):find("CmdSubTrack") then
+
+    -- Reuse the existing command sub-track if there is one; only then create.
+    local sub = childOfClass(timeRange, "CmdSubTrack")
+    if sub then
         return sub
     end
-    for ci = 1, 16 do
-        local c = timeRange[ci]
-        if c and tostring(c):find("CmdSubTrack") then
-            return c
-        end
-    end
-    sub = timeRange:Acquire("CmdSubTrack")
-    coroutine.yield(0.1)
-    return sub
+    return acquireChild(timeRange, "CmdSubTrack", "CmdSubTrack")
 end
 
 --- One trigger event per marker (no on/off pair, just "go to this cue").

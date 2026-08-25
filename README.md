@@ -103,15 +103,18 @@ six markers.
 Honesty matters more than a tidy feature list, so:
 
 - **The grandMA3 half is field-tested.** Creating the cues, the track and the timecode
-  events has been run on grandMA3 2.4 with a real show file, and it worked. That logic is
-  unchanged in this release.
+  events has been run on grandMA3 2.4.2.2 with a real show file: 37 markers exported from
+  Reaper landed as 37 cues and 37 timecode events, at the right times.
+- **Accented names work.** Hungarian marker names (`SZÓLÓ`, `KIÁLLÁS`, `VOKÁL BE`) came
+  through the whole chain unchanged, so non-Latin-1 characters are no longer a question
+  mark — at least for UTF-8 input.
 - **The file parsing, the cue numbering and the sequence lookup are covered by tests**
   you can run yourself without a console:
   `lua tests/test_parser.lua` (69 checks). This is where a silent mistake would be worst —
   a marker landing at the wrong time, or an import writing over a cue you already had —
   so every format, time notation and numbering case is asserted.
-- **Not tested:** every grandMA3 version, network sessions, very large marker lists
-  (a few hundred is fine; thousands is untried), and non-Latin characters in marker names.
+- **Not tested:** every grandMA3 version, network sessions, and very large marker lists
+  (a few hundred is fine; thousands is untried).
 
 If something breaks, open an issue with the first few lines of your marker file and what
 the Command Line printed — the plugin logs every marker it imports.
